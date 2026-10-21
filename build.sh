@@ -2,11 +2,14 @@
 # 编译并打包 SitReminder.app（Apple 芯片 + Intel 通用版本）
 #   ./build.sh            只编译
 #   ./build.sh --install  编译后安装到 ~/Applications 并启动
-#   ./build.sh --zip      编译后生成 dist/SitReminder-<版本>.zip（含安装说明）
+#   ./build.sh --zip      编译后生成 dist/SitReminder-<版本>.zip
+#   ./build.sh --dmg      编译后生成 dist/SitReminder-<版本>.dmg（含「应用程序」快捷方式）
+#   ./build.sh --release  同时生成 zip 和 dmg
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP=build/SitReminder.app
+VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Info.plist)
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 for arch in arm64 x86_64; do
@@ -41,10 +44,20 @@ if [[ "${1:-}" == "--install" ]]; then
   echo "Installed: ~/Applications/SitReminder.app"
 fi
 
-if [[ "${1:-}" == "--zip" ]]; then
-  VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Info.plist)
+if [[ "${1:-}" == "--zip" || "${1:-}" == "--release" ]]; then
   mkdir -p dist
   rm -f "dist/SitReminder-$VERSION.zip"
   ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/SitReminder-$VERSION.zip"
   echo "ZIP: $PWD/dist/SitReminder-$VERSION.zip"
+fi
+
+if [[ "${1:-}" == "--dmg" || "${1:-}" == "--release" ]]; then
+  STAGE=build/dmg
+  rm -rf "$STAGE" && mkdir -p "$STAGE" dist
+  cp -R "$APP" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  rm -f "dist/SitReminder-$VERSION.dmg"
+  hdiutil create -volname SitReminder -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov \
+    "dist/SitReminder-$VERSION.dmg" >/dev/null
+  echo "DMG: $PWD/dist/SitReminder-$VERSION.dmg"
 fi

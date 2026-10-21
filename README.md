@@ -17,8 +17,9 @@
 
 ## 安装
 
-1. 下载 [`releases/SitReminder-1.0.zip`](releases/SitReminder-1.0.zip) 并解压，得到 `SitReminder.app`。
-2. 把 `SitReminder.app` 拖到「应用程序」文件夹，然后双击打开。
+1. 打开 [Releases 页面](https://github.com/liyan527/SitReminder/releases/latest)，下载 `SitReminder-<版本>.dmg`。
+2. 双击打开 DMG，把 `SitReminder` 拖到旁边的「Applications」文件夹，然后在「应用程序」里双击打开。
+   也可以下载 `SitReminder-<版本>.zip`，解压后把 `SitReminder.app` 拖到「应用程序」。
 3. 如果系统提示「无法验证开发者」，按下面任一方式处理：
    - 打开「系统设置 > 隐私与安全性」，在底部点「仍要打开」。
    - 在终端运行 `xattr -dr com.apple.quarantine /Applications/SitReminder.app`，然后重新打开。
@@ -42,6 +43,8 @@
 ./build.sh            # 编译通用版本到 build/SitReminder.app
 ./build.sh --install  # 编译后安装到 ~/Applications 并启动
 ./build.sh --zip      # 编译后生成 dist/SitReminder-<版本>.zip
+./build.sh --dmg      # 编译后生成 dist/SitReminder-<版本>.dmg
+./build.sh --release  # 同时生成 zip 和 dmg
 ```
 
 ## 文件
@@ -52,5 +55,4 @@
 | `Info.plist` | 应用配置：菜单栏应用，不显示 Dock 图标 |
 | `make_icon.swift` | 生成应用图标 |
 | `build.sh` | 编译、签名和打包 |
-| `releases/` | 已编译的安装包 |
 | `docs/` | README 使用的截图 |
