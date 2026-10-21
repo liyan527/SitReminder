@@ -43,11 +43,8 @@ fi
 
 if [[ "${1:-}" == "--zip" ]]; then
   VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Info.plist)
-  STAGE=build/pkg/SitReminder
-  rm -rf build/pkg && mkdir -p "$STAGE" dist
-  cp -R "$APP" "$STAGE/"
-  cp 安装说明.txt "$STAGE/"
+  mkdir -p dist
   rm -f "dist/SitReminder-$VERSION.zip"
-  ditto -c -k --sequesterRsrc --keepParent "$STAGE" "dist/SitReminder-$VERSION.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/SitReminder-$VERSION.zip"
   echo "ZIP: $PWD/dist/SitReminder-$VERSION.zip"
 fi

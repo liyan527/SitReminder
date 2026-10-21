@@ -17,15 +17,22 @@
 
 ## 安装
 
-1. 下载 [`releases/SitReminder-1.0.zip`](releases/SitReminder-1.0.zip) 并解压。
+1. 下载 [`releases/SitReminder-1.0.zip`](releases/SitReminder-1.0.zip) 并解压，得到 `SitReminder.app`。
 2. 把 `SitReminder.app` 拖到「应用程序」文件夹，然后双击打开。
 3. 如果系统提示「无法验证开发者」，按下面任一方式处理：
    - 打开「系统设置 > 隐私与安全性」，在底部点「仍要打开」。
    - 在终端运行 `xattr -dr com.apple.quarantine /Applications/SitReminder.app`，然后重新打开。
+4. 启动后，菜单栏右上角会出现一个站立小人图标和倒计时。点击图标即可设置。
 
 出现这个提示，是因为应用只做了本机签名（ad-hoc），没有经过 Apple 公证。
 
 系统要求：macOS 13 或更高版本，支持 Apple 芯片和 Intel 芯片。
+
+## 卸载
+
+1. 点菜单栏图标，在面板里关掉「开机自动启动」。
+2. 点面板底部的「退出久坐提醒」。
+3. 把「应用程序」里的 `SitReminder.app` 移到废纸篓。
 
 ## 从源码构建
 
@@ -45,4 +52,5 @@
 | `Info.plist` | 应用配置：菜单栏应用，不显示 Dock 图标 |
 | `make_icon.swift` | 生成应用图标 |
 | `build.sh` | 编译、签名和打包 |
-| `安装说明.txt` | 随安装包附带的说明 |
+| `releases/` | 已编译的安装包 |
+| `docs/` | README 使用的截图 |
