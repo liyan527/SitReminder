@@ -433,13 +433,57 @@ enum Log {
 
 // MARK: - 菜单栏图标
 
+// MenuBarExtra 会把 SwiftUI 标签转成系统状态栏标题，忽略 monospacedDigit/frame，
+// 倒计时每秒改变宽度会推动旁边的菜单栏图标。这里画成固定宽度的模板图片。
 struct MenuBarLabel: View {
     @EnvironmentObject var state: ReminderState
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: "figure.stand")
-            Text(state.menuTitle).monospacedDigit()
+        Image(nsImage: MenuBarIcon.image(title: state.menuTitle,
+                                         wide: state.intervalMinutes >= 100))
+    }
+}
+
+enum MenuBarIcon {
+    static let height: CGFloat = 18
+    static let gap: CGFloat = 4
+
+    static var font: NSFont { NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .regular) }
+
+    // 文字区宽度只取决于提醒间隔是否达到三位数分钟，不随倒计时变化
+    static func textWidth(wide: Bool) -> CGFloat {
+        let attrs: [NSAttributedString.Key: Any] = [.font: font]
+        let samples = [wide ? "000:00" : "00:00", "休息", "暂停"]
+        return ceil(samples.map { ($0 as NSString).size(withAttributes: attrs).width }.max()!)
+    }
+
+    static func image(title: String, wide: Bool) -> NSImage {
+        let font = self.font
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+        let symbol = NSImage(systemSymbolName: "figure.stand", accessibilityDescription: "久坐提醒")?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? NSImage()
+        let symbolSize = symbol.size
+        let textArea = textWidth(wide: wide)
+        let size = NSSize(width: ceil(symbolSize.width) + gap + textArea, height: height)
+
+        let img = NSImage(size: size, flipped: false) { _ in
+            symbol.draw(in: NSRect(x: 0, y: (height - symbolSize.height) / 2,
+                                   width: symbolSize.width, height: symbolSize.height))
+            let str = title as NSString
+            let w = str.size(withAttributes: attrs).width
+            let textX = ceil(symbolSize.width) + gap
+            // 时间靠右对齐，冒号和秒数位置固定；文字状态居中
+            let isTime = title.contains(":")
+            let x = isTime ? textX + textArea - w : textX + (textArea - w) / 2
+            // 数字中心略高于图标中心 0.75pt，与系统原生渲染的菜单栏标题位置一致
+            // draw(at:) 的坐标是行框左下角，基线在其上方 |descender| 处
+            let baseline = height / 2 - font.capHeight / 2
+            let y = baseline + font.descender
+            str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
+            return true
         }
+        img.isTemplate = true   // 跟随菜单栏深浅色
+        img.accessibilityDescription = "久坐提醒 \(title)"
+        return img
     }
 }
 
