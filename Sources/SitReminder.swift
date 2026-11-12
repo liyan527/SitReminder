@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import ServiceManagement
 import CoreGraphics
+import QuartzCore
 
 // MARK: - App 入口（菜单栏应用，无 Dock 图标）
 
@@ -70,7 +71,9 @@ final class ReminderState: ObservableObject {
     @Published private(set) var reminderShowing = false
     @Published private(set) var isLocked = false
     @Published private(set) var launchAtLogin = false
-    @Published private(set) var loginNote: String = ""
+    @Published private var loginNoteKey = ""
+    @Published private var loginErrorDetail = ""
+    var loginNote: String { loginNoteKey.isEmpty ? "" : tr(loginNoteKey, loginErrorDetail) }
 
     let rest = RestSession()
     private var nextFire = Date()
@@ -348,9 +351,10 @@ final class ReminderState: ObservableObject {
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            loginNote = ""
+            loginNoteKey = ""
         } catch {
-            loginNote = "设置失败：\(error.localizedDescription)"
+            loginNoteKey = "设置失败：%@"
+            loginErrorDetail = error.localizedDescription
         }
         refreshLoginStatus()
     }
@@ -364,7 +368,7 @@ final class ReminderState: ObservableObject {
             name = "enabled"
         case .requiresApproval:
             launchAtLogin = true
-            loginNote = "需要在「系统设置 > 通用 > 登录项」中允许"
+            loginNoteKey = "需要在「系统设置 > 通用 > 登录项」中允许"
             name = "requiresApproval"
         case .notRegistered:
             launchAtLogin = false
@@ -387,10 +391,10 @@ final class ReminderState: ObservableObject {
     }
 
     var menuTitle: String {
-        if reminderShowing { return "休息" }
-        if pausedUntil != nil { return "暂停" }
-        if !enabled { return "关" }
-        if isAway { return "休息" }
+        if reminderShowing { return tr("休息") }
+        if pausedUntil != nil { return tr("暂停") }
+        if !enabled { return tr("关") }
+        if isAway { return tr("休息") }
         return format(remainingSeconds)
     }
 }
@@ -437,6 +441,7 @@ enum Log {
 // 倒计时每秒改变宽度会推动旁边的菜单栏图标。这里画成固定宽度的模板图片。
 struct MenuBarLabel: View {
     @EnvironmentObject var state: ReminderState
+    @ObservedObject private var localization = AppLocalization.shared
     var body: some View {
         Image(nsImage: MenuBarIcon.image(title: state.menuTitle,
                                          wide: state.intervalMinutes >= 100))
@@ -452,14 +457,14 @@ enum MenuBarIcon {
     // 文字区宽度只取决于提醒间隔是否达到三位数分钟，不随倒计时变化
     static func textWidth(wide: Bool) -> CGFloat {
         let attrs: [NSAttributedString.Key: Any] = [.font: font]
-        let samples = [wide ? "000:00" : "00:00", "休息", "暂停"]
+        let samples = [wide ? "000:00" : "00:00", tr("休息"), tr("暂停"), tr("关")]
         return ceil(samples.map { ($0 as NSString).size(withAttributes: attrs).width }.max()!)
     }
 
     static func image(title: String, wide: Bool) -> NSImage {
         let font = self.font
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
-        let symbol = NSImage(systemSymbolName: "figure.stand", accessibilityDescription: "久坐提醒")?
+        let symbol = NSImage(systemSymbolName: "figure.stand", accessibilityDescription: tr("久坐提醒"))?
             .withSymbolConfiguration(.init(pointSize: 13, weight: .regular)) ?? NSImage()
         let symbolSize = symbol.size
         let textArea = textWidth(wide: wide)
@@ -482,12 +487,12 @@ enum MenuBarIcon {
             return true
         }
         img.isTemplate = true   // 跟随菜单栏深浅色
-        img.accessibilityDescription = "久坐提醒 \(title)"
+        img.accessibilityDescription = "\(tr("久坐提醒")) \(title)"
         return img
     }
 }
 
-// MARK: - 设置面板（点击菜单栏图标弹出，iOS 设置风格）
+// MARK: - 设置面板（点击菜单栏图标弹出，毛玻璃分组）
 
 enum Palette {
     private static func dynamic(_ light: NSColor, _ dark: NSColor) -> Color {
@@ -498,10 +503,12 @@ enum Palette {
     private static func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> NSColor {
         NSColor(srgbRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
     }
-    // iOS systemGroupedBackground / secondarySystemGroupedBackground
+    // 毛玻璃上保留清晰分组；减少透明度时回退为实色。
     static let groupedBackground = dynamic(rgb(242, 242, 247), rgb(0, 0, 0))
-    static let card = dynamic(rgb(255, 255, 255), rgb(28, 28, 30))
-    static let separator = dynamic(rgb(198, 198, 200), rgb(56, 56, 58))
+    static let card = dynamic(rgb(255, 255, 255, 0.42), rgb(255, 255, 255, 0.07))
+    static let solidCard = dynamic(rgb(255, 255, 255), rgb(28, 28, 30))
+    static let glassBorder = dynamic(rgb(255, 255, 255, 0.65), rgb(255, 255, 255, 0.16))
+    static let separator = dynamic(rgb(0, 0, 0, 0.10), rgb(255, 255, 255, 0.12))
     static let fill = dynamic(rgb(118, 118, 128, 0.12), rgb(118, 118, 128, 0.24))
     static let segmentSelected = dynamic(rgb(255, 255, 255), rgb(99, 99, 102))
     static let green = Color(nsColor: rgb(52, 199, 89))
@@ -514,50 +521,65 @@ enum Palette {
     static let red = Color(nsColor: rgb(255, 59, 48))
 }
 
+struct GlassCardBackground: View {
+    var cornerRadius: CGFloat = 14
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(reduceTransparency ? Palette.solidCard : Palette.card)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Palette.glassBorder, lineWidth: 0.5)
+            )
+    }
+}
+
 struct SettingsPanel: View {
     @EnvironmentObject var state: ReminderState
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ObservedObject private var localization = AppLocalization.shared
 
     var body: some View {
         VStack(spacing: 16) {
             HeaderCard()
 
-            SettingsSection(title: "提醒") {
-                SettingRow(icon: "figure.stand", color: Palette.green, title: "久坐提醒") {
+            SettingsSection(title: tr("提醒")) {
+                SettingRow(icon: "figure.stand", color: Palette.green, title: tr("久坐提醒")) {
                     IOSSwitch(isOn: $state.enabled)
                 }
                 RowDivider()
                 VStack(spacing: 8) {
-                    SettingRow(icon: "timer", color: Palette.orange, title: "提醒间隔") {
-                        CapsuleStepper(value: $state.intervalMinutes, range: 5...180, step: 5, unit: "分钟")
+                    SettingRow(icon: "timer", color: Palette.orange, title: tr("提醒间隔")) {
+                        CapsuleStepper(value: $state.intervalMinutes, range: 5...180, step: 5, unit: tr("分钟"))
                     }
                     SegmentedChips(options: [30, 45, 60, 90], selection: $state.intervalMinutes)
-                        .padding(.leading, 48)
-                        .padding(.trailing, 12)
+                        .padding(.horizontal, 12)
                         .padding(.bottom, 10)
                 }
                 RowDivider()
-                SettingRow(icon: "figure.walk", color: Palette.blue, title: "离开电脑休息") {
-                    CapsuleStepper(value: $state.restMinutes, range: 1...15, step: 1, unit: "分钟")
+                SettingRow(icon: "figure.walk", color: Palette.blue, title: tr("离开电脑休息")) {
+                    CapsuleStepper(value: $state.restMinutes, range: 1...15, step: 1, unit: tr("分钟"))
                 }
                 RowDivider()
-                SettingRow(icon: "clock.arrow.circlepath", color: Palette.indigo, title: "可推迟一次") {
-                    CapsuleStepper(value: $state.snoozeMinutes, range: 1...30, step: 1, unit: "分钟")
+                SettingRow(icon: "clock.arrow.circlepath", color: Palette.indigo, title: tr("可推迟一次")) {
+                    CapsuleStepper(value: $state.snoozeMinutes, range: 1...30, step: 1, unit: tr("分钟"))
                 }
             }
 
-            SettingsSection(title: "自动识别",
-                            footer: "锁屏时停止计时。离开或锁屏超过设定时长，回来后从头计时。") {
-                SettingRow(icon: "lock.fill", color: Palette.teal, title: "离开判定") {
-                    CapsuleStepper(value: $state.awayResetMinutes, range: 1...30, step: 1, unit: "分钟")
+            SettingsSection(title: tr("自动识别"),
+                            footer: tr("锁屏时停止计时。离开或锁屏超过设定时长，回来后从头计时。")) {
+                SettingRow(icon: "lock.fill", color: Palette.teal, title: tr("离开判定")) {
+                    CapsuleStepper(value: $state.awayResetMinutes, range: 1...30, step: 1, unit: tr("分钟"))
                 }
             }
 
-            SettingsSection(title: "通用", footer: state.loginNote.isEmpty ? nil : state.loginNote) {
-                SettingRow(icon: "speaker.wave.2.fill", color: Palette.pink, title: "提醒声音") {
+            SettingsSection(title: tr("通用"), footer: state.loginNote.isEmpty ? nil : state.loginNote) {
+                SettingRow(icon: "speaker.wave.2.fill", color: Palette.pink, title: tr("提醒声音")) {
                     IOSSwitch(isOn: $state.playSound)
                 }
                 RowDivider()
-                SettingRow(icon: "power", color: Palette.gray, title: "开机自动启动") {
+                SettingRow(icon: "power", color: Palette.gray, title: tr("开机自动启动")) {
                     IOSSwitch(isOn: Binding(
                         get: { state.launchAtLogin },
                         set: { state.setLaunchAtLogin($0) }
@@ -566,11 +588,31 @@ struct SettingsPanel: View {
             }
 
             HStack {
-                Button("查看日志") { NSWorkspace.shared.open(Log.url) }
+                Button(tr("查看日志")) { NSWorkspace.shared.open(Log.url) }
                     .buttonStyle(.plain)
                     .foregroundStyle(Palette.blue)
                 Spacer()
-                Button("退出久坐提醒") { NSApp.terminate(nil) }
+                Menu {
+                    ForEach(AppLanguage.allCases) { language in
+                        Button {
+                            localization.selection = language
+                        } label: {
+                            if localization.selection == language {
+                                Label(language.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(language.displayName)
+                            }
+                        }
+                    }
+                } label: {
+                    Label(localization.selection.displayName, systemImage: "globe")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help(tr("语言"))
+                .accessibilityLabel(tr("语言"))
+                Spacer()
+                Button(tr("退出久坐提醒")) { NSApp.terminate(nil) }
                     .buttonStyle(.plain)
                     .foregroundStyle(Palette.red)
             }
@@ -579,7 +621,14 @@ struct SettingsPanel: View {
         }
         .padding(14)
         .frame(width: 340)
-        .background(Palette.groupedBackground)
+        .background {
+            if reduceTransparency {
+                Palette.groupedBackground
+            } else {
+                VisualEffectBlur(material: .popover, forceDark: false)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onAppear { state.refreshLoginStatus() }
     }
 }
@@ -587,6 +636,7 @@ struct SettingsPanel: View {
 // 顶部卡片：圆环倒计时 + 快捷操作
 struct HeaderCard: View {
     @EnvironmentObject var state: ReminderState
+    @ObservedObject private var localization = AppLocalization.shared
 
     var body: some View {
         VStack(spacing: 14) {
@@ -619,24 +669,24 @@ struct HeaderCard: View {
 
             HStack(spacing: 0) {
                 if state.pausedUntil == nil {
-                    QuickAction(icon: "pause.fill", title: "暂停 1 小时", color: Palette.orange) {
+                    QuickAction(icon: "pause.fill", title: tr("暂停 1 小时"), color: Palette.orange) {
                         state.pause(hours: 1)
                     }
                 } else {
-                    QuickAction(icon: "play.fill", title: "恢复提醒", color: Palette.green) {
+                    QuickAction(icon: "play.fill", title: tr("恢复提醒"), color: Palette.green) {
                         state.resume()
                     }
                 }
-                QuickAction(icon: "arrow.counterclockwise", title: "重新计时", color: Palette.blue) {
+                QuickAction(icon: "arrow.counterclockwise", title: tr("重新计时"), color: Palette.blue) {
                     state.resetCycle("手动")
                 }
-                QuickAction(icon: "eye.fill", title: "预览 15 秒", color: Palette.indigo) {
+                QuickAction(icon: "eye.fill", title: tr("预览 15 秒"), color: Palette.indigo) {
                     state.remindNow(preview: true)
                 }
             }
         }
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Palette.card))
+        .background(GlassCardBackground())
     }
 
     private var total: Double { Double(max(1, state.intervalMinutes * 60)) }
@@ -661,26 +711,26 @@ struct HeaderCard: View {
     }
 
     private var statusTitle: String {
-        if state.reminderShowing { return "正在休息" }
-        if state.pausedUntil != nil { return "已暂停" }
-        if !state.enabled { return "提醒已关闭" }
-        if state.isAway { return "检测到你已离开" }
-        return "距离下次起身"
+        if state.reminderShowing { return tr("正在休息") }
+        if state.pausedUntil != nil { return tr("已暂停") }
+        if !state.enabled { return tr("提醒已关闭") }
+        if state.isAway { return tr("检测到你已离开") }
+        return tr("距离下次起身")
     }
 
     private var bigText: String {
         if let until = state.pausedUntil { return Self.hm(until) }
         if !state.enabled { return "--:--" }
-        if state.reminderShowing || state.isAway { return "休息中" }
+        if state.reminderShowing || state.isAway { return tr("休息中") }
         return format(state.remainingSeconds)
     }
 
     private var subtitle: String {
-        if state.pausedUntil != nil { return "到点后自动恢复提醒" }
-        if !state.enabled { return "打开「久坐提醒」开始计时" }
-        if state.isAway { return "回来后从头计时" }
-        if state.reminderShowing { return "离开电脑，倒计时结束后继续工作" }
-        return "\(Self.hm(state.nextFireDate)) 提醒你起来走动"
+        if state.pausedUntil != nil { return tr("到点后自动恢复提醒") }
+        if !state.enabled { return tr("打开「久坐提醒」开始计时") }
+        if state.isAway { return tr("回来后从头计时") }
+        if state.reminderShowing { return tr("离开电脑，倒计时结束后继续工作") }
+        return tr("%@ 提醒你起来走动", Self.hm(state.nextFireDate))
     }
 
     static func hm(_ d: Date) -> String {
@@ -735,7 +785,7 @@ struct SettingsSection<Content: View>: View {
                 .foregroundStyle(.secondary)
                 .padding(.leading, 14)
             VStack(spacing: 0) { content }
-                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Palette.card))
+                .background(GlassCardBackground(cornerRadius: 12))
             if let footer {
                 Text(footer)
                     .font(.system(size: 11))
@@ -813,14 +863,16 @@ struct CapsuleStepper: View {
             stepButton("minus", enabled: value > range.lowerBound) {
                 value = max(range.lowerBound, value - step)
             }
-            Text("\(value) \(unit)")
+            Text(String(format: "%02d", value) + " \(unit)")
                 .font(.system(size: 12, weight: .medium))
                 .monospacedDigit()
-                .frame(minWidth: 54)
+                .lineLimit(1)
+                .frame(width: 72, height: 26, alignment: .center)
             stepButton("plus", enabled: value < range.upperBound) {
                 value = min(range.upperBound, value + step)
             }
         }
+        .padding(2)
         .background(Capsule().fill(Palette.fill))
     }
 
@@ -828,7 +880,7 @@ struct CapsuleStepper: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .bold))
-                .frame(width: 26, height: 24)
+                .frame(width: 28, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(PressableStyle())
@@ -841,28 +893,32 @@ struct CapsuleStepper: View {
 struct SegmentedChips: View {
     let options: [Int]
     @Binding var selection: Int
+    @ObservedObject private var localization = AppLocalization.shared
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options, id: \.self) { m in
-                Button {
-                    withAnimation(.easeOut(duration: 0.15)) { selection = m }
-                } label: {
-                    Text("\(m) 分")
-                        .font(.system(size: 12, weight: selection == m ? .semibold : .regular))
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(selection == m ? Palette.segmentSelected : Color.clear)
-                                .shadow(color: .black.opacity(selection == m ? 0.12 : 0), radius: 2, x: 0, y: 1)
-                        )
-                        .contentShape(Rectangle())
+        GeometryReader { geometry in
+            let width = max(0, (geometry.size.width - CGFloat(max(0, options.count - 1)) * 2) / CGFloat(max(1, options.count)))
+            HStack(spacing: 2) {
+                ForEach(options, id: \.self) { m in
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { selection = m }
+                    } label: {
+                        Text(tr("%d 分", m))
+                            .font(.system(size: 12, weight: selection == m ? .semibold : .regular))
+                            .foregroundStyle(.primary)
+                            .frame(width: width, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(selection == m ? Palette.segmentSelected : Color.clear)
+                                    .shadow(color: .black.opacity(selection == m ? 0.12 : 0), radius: 2, x: 0, y: 1)
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
+        .frame(height: 28)
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.fill))
     }
@@ -873,6 +929,17 @@ struct SegmentedChips: View {
 final class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+    var onEscape: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) { onEscape?() }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == 53, let onEscape {
+            onEscape()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 @MainActor
@@ -916,6 +983,12 @@ final class OverlayController {
         for screen in NSScreen.screens {
             let w = OverlayWindow(contentRect: screen.frame, styleMask: [.borderless],
                                   backing: .buffered, defer: false)
+            if ReminderState.shared.rest.isPreview {
+                w.onEscape = {
+                    guard ReminderState.shared.reminderShowing, ReminderState.shared.rest.isPreview else { return }
+                    ReminderState.shared.finishRest("结束预览(Esc)")
+                }
+            }
             w.level = level
             w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             w.isOpaque = false
@@ -957,6 +1030,7 @@ final class RestSession: ObservableObject {
     @Published var completed = false
     @Published var snoozeUsed = false
     @Published var isPreview = false
+    @Published var animationsPaused = false
     private var remainingExact: Double = 180
 
     func begin(totalSeconds: Int, sittingMinutes: Int, snoozeMinutes: Int, isPreview: Bool) {
@@ -967,6 +1041,7 @@ final class RestSession: ObservableObject {
         self.sittingMinutes = sittingMinutes
         self.snoozeMinutes = snoozeMinutes
         self.isPreview = isPreview
+        self.animationsPaused = false
         self.userActive = false
         self.completed = false
         // 推迟后再次弹出时，不再允许推迟
@@ -992,15 +1067,92 @@ final class RestSession: ObservableObject {
 }
 
 struct VisualEffectBlur: NSViewRepresentable {
+    var material: NSVisualEffectView.Material = .fullScreenUI
+    var forceDark = true
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let v = NSVisualEffectView()
-        v.material = .fullScreenUI
-        v.blendingMode = .behindWindow
-        v.state = .active
-        v.appearance = NSAppearance(named: .darkAqua)
+        configure(v)
         return v
     }
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) { configure(nsView) }
+
+    private func configure(_ v: NSVisualEffectView) {
+        v.material = material
+        v.blendingMode = .behindWindow
+        v.state = .active
+        v.appearance = forceDark ? NSAppearance(named: .darkAqua) : nil
+    }
+}
+
+// 只让装饰光晕呼吸；倒计时文字不缩放，每秒刷新时也不重启动画。
+final class BreathingHaloView: NSView {
+    private let halo = CAShapeLayer()
+    private var requestedAnimation = false
+    private(set) var isAnimating = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        halo.fillColor = NSColor.clear.cgColor
+        halo.strokeColor = NSColor.systemMint.withAlphaComponent(0.6).cgColor
+        halo.lineWidth = 2
+        halo.shadowColor = NSColor.systemMint.cgColor
+        halo.shadowRadius = 22
+        halo.shadowOpacity = 0.55
+        halo.shadowOffset = .zero
+        layer?.addSublayer(halo)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        halo.frame = bounds
+        halo.path = CGPath(ellipseIn: bounds.insetBy(dx: 16, dy: 16), transform: nil)
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateAnimation()
+    }
+
+    func setAnimating(_ enabled: Bool) {
+        requestedAnimation = enabled
+        updateAnimation()
+    }
+
+    private func updateAnimation() {
+        let enabled = requestedAnimation && window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        guard enabled != isAnimating else { return }
+        isAnimating = enabled
+        halo.removeAllAnimations()
+        guard enabled else { return }
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.96; scale.toValue = 1.04
+        let opacity = CABasicAnimation(keyPath: "opacity")
+        opacity.fromValue = 0.38; opacity.toValue = 0.85
+        let group = CAAnimationGroup()
+        group.animations = [scale, opacity]
+        group.duration = 3
+        group.autoreverses = true
+        group.repeatCount = .infinity
+        group.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        halo.add(group, forKey: "breathing")
+    }
+}
+
+struct BreathingHalo: NSViewRepresentable {
+    var animated: Bool
+    func makeNSView(context: Context) -> BreathingHaloView {
+        let view = BreathingHaloView(frame: .zero)
+        view.setAnimating(animated)
+        return view
+    }
+    func updateNSView(_ nsView: BreathingHaloView, context: Context) { nsView.setAnimating(animated) }
+    static func dismantleNSView(_ nsView: BreathingHaloView, coordinator: ()) { nsView.setAnimating(false) }
 }
 
 struct RestOverlayView: View {
@@ -1008,6 +1160,9 @@ struct RestOverlayView: View {
     let onSnooze: () -> Void
     let onSkip: () -> Void
     let onFinish: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ObservedObject private var localization = AppLocalization.shared
 
     private let tip = [
         "站起来走两步，接杯水。",
@@ -1019,77 +1174,95 @@ struct RestOverlayView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBlur()
-            LinearGradient(colors: [Color(red: 0.02, green: 0.16, blue: 0.11).opacity(0.92),
-                                    Color.black.opacity(0.92)],
-                           startPoint: .top, endPoint: .bottom)
+            if reduceTransparency {
+                Color(red: 0.03, green: 0.07, blue: 0.12)
+            } else {
+                VisualEffectBlur()
+                LinearGradient(colors: [Color(red: 0.02, green: 0.10, blue: 0.16).opacity(0.32),
+                                        Color.black.opacity(0.48)],
+                               startPoint: .top, endPoint: .bottom)
+            }
 
-            VStack(spacing: 26) {
+            VStack(spacing: 20) {
                 Image(systemName: session.completed ? "checkmark.circle.fill" : "figure.walk")
-                    .font(.system(size: 96, weight: .regular))
+                    .font(.system(size: 64, weight: .regular))
                     .foregroundStyle(.green)
 
-                Text(session.completed ? "休息完成" : "起来走动一下")
-                    .font(.system(size: 54, weight: .bold))
+                Text(tr(session.completed ? "休息完成" : "起来走动一下"))
+                    .font(.system(size: 44, weight: .semibold))
                     .foregroundStyle(.white)
 
                 Text(subtitle)
-                    .font(.system(size: 22))
+                    .font(.system(size: 20))
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(.white.opacity(0.85))
 
                 ZStack {
-                    Circle().stroke(Color.white.opacity(0.12), lineWidth: 12)
+                    BreathingHalo(animated: !reduceMotion && !session.animationsPaused && !session.completed)
+                        .allowsHitTesting(false)
+                    Circle().stroke(Color.white.opacity(0.14), lineWidth: 3)
+                        .padding(16)
                     Circle()
                         .trim(from: 0, to: session.progress)
-                        .stroke(Color.green, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                        .stroke(Color.green.opacity(0.85), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                        .animation(.linear(duration: 1), value: session.progress)
-                    Text(format(session.remaining))
+                        .padding(16)
+                        .animation(reduceMotion || session.animationsPaused ? nil : .linear(duration: 1), value: session.progress)
+                    Text(String(format: "%02d:%02d", session.remaining / 60, session.remaining % 60))
                         .font(.system(size: 64, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(.white)
                 }
-                .frame(width: 220, height: 220)
+                .frame(width: 244, height: 244)
 
                 statusLine
 
                 if session.completed {
-                    Button("继续工作", action: onFinish)
+                    Button(tr("继续工作"), action: onFinish)
                         .buttonStyle(PillButtonStyle(primary: true, large: true))
                         .keyboardShortcut(.defaultAction)
                 } else {
                     HStack(spacing: 18) {
                         if !session.snoozeUsed && !session.isPreview {
-                            Button("推迟 \(session.snoozeMinutes) 分钟（仅一次）", action: onSnooze)
+                            Button(tr("推迟 %d 分钟（仅一次）", session.snoozeMinutes), action: onSnooze)
                                 .buttonStyle(PillButtonStyle(primary: false, large: true))
                         }
-                        ConfirmSkipButton(title: session.isPreview ? "结束预览" : "紧急跳过",
-                                         action: onSkip)
+                        if session.isPreview {
+                            Button(tr("结束预览（Esc）"), action: onSkip)
+                                .buttonStyle(PillButtonStyle(primary: true, large: true))
+                                .keyboardShortcut(.cancelAction)
+                        } else {
+                            ConfirmSkipButton(title: tr("紧急跳过"), action: onSkip)
+                        }
+                        Button(tr(reduceMotion ? "动态效果已关闭" : (session.animationsPaused ? "播放动画" : "暂停动画"))) {
+                            session.animationsPaused.toggle()
+                        }
+                        .buttonStyle(PillButtonStyle(primary: false, large: true))
+                        .disabled(reduceMotion)
                     }
                 }
             }
-            .padding(40)
+            .padding(32)
         }
         .ignoresSafeArea()
     }
 
     private var subtitle: String {
         if session.completed {
-            return "欢迎回来。动一下鼠标或点击下方按钮，开始新一轮计时。"
+            return tr("欢迎回来。动一下鼠标或点击下方按钮，开始新一轮计时。")
         }
-        return "你已经连续坐了 \(session.sittingMinutes) 分钟。请离开座位。\n\(tip)"
+        return tr("你已经连续坐了 %d 分钟。请离开座位。\n%@", session.sittingMinutes, tr(tip))
     }
 
     @ViewBuilder private var statusLine: some View {
         if session.completed {
             Text(" ").font(.system(size: 18))
         } else if session.userActive {
-            Label("检测到键盘或鼠标操作，计时已暂停。请离开电脑。", systemImage: "pause.circle.fill")
+            Label(tr("检测到键盘或鼠标操作，计时已暂停。请离开电脑。"), systemImage: "pause.circle.fill")
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.orange)
         } else {
-            Label("离开电脑计时中，碰键盘或鼠标会暂停计时", systemImage: "figure.walk.motion")
+            Label(tr("离开电脑计时中，碰键盘或鼠标会暂停计时"), systemImage: "figure.walk.motion")
                 .font(.system(size: 18))
                 .foregroundStyle(.white.opacity(0.55))
         }
@@ -1111,9 +1284,10 @@ struct ConfirmSkipButton: View {
     let title: String
     let action: () -> Void
     @StateObject private var model = ConfirmModel()
+    @ObservedObject private var localization = AppLocalization.shared
 
     var body: some View {
-        Button(model.armed ? "确认\(title)（再点一次）" : title) {
+        Button(model.armed ? tr("确认%@（再点一次）", title) : title) {
             if model.armed {
                 model.resetWork?.cancel()
                 model.armed = false

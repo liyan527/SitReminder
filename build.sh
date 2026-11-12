@@ -15,12 +15,13 @@ rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 for arch in arm64 x86_64; do
   swiftc -parse-as-library -O -swift-version 5 \
     -target ${arch}-apple-macos13.0 \
-    Sources/SitReminder.swift -o build/SitReminder-${arch}
+    Sources/*.swift -o build/SitReminder-${arch}
 done
 lipo -create build/SitReminder-arm64 build/SitReminder-x86_64 -output "$APP/Contents/MacOS/SitReminder"
 rm build/SitReminder-arm64 build/SitReminder-x86_64
 
 cp Info.plist "$APP/Contents/Info.plist"
+cp -R Resources/. "$APP/Contents/Resources/"
 
 # 图标
 ICONSET=build/AppIcon.iconset
